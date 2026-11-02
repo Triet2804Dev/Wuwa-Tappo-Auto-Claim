@@ -1,0 +1,28 @@
+# Configuration & Sensitive Data
+config.json
+*.log
+auto_claim.log
+
+# Build & Executable Artifacts
+*.exe
+WuwaTappoAutoClaim.exe
+dist/
+build/
+*.spec
+
+# Python cache & environments
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+.venv/
+
+# Tool scripts
+tool/test_pet_reload.py
+tool/test_pet_reload.bat
+tool/test_discord.py
+tool/test_discord.bat
+tool/get_token.py
+tool/get_token.bat
+

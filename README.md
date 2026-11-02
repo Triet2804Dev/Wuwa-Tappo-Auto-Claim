@@ -7,8 +7,8 @@ Available in two versions:
 - **Cloud (Google Apps Script)**: Runs 24/7 on Google Cloud via time-driven triggers, no PC required.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/Triet2804Dev/Wuwa-Tappo-Auto-Claim?include_prereleases)](https://github.com/Triet2804Dev/Wuwa-Tappo-Auto-Claim/releases)
-[![Stars](https://img.shields.io/github/stars/Triet2804Dev/Wuwa-Tappo-Auto-Claim?style=social)](https://github.com/Triet2804Dev/Wuwa-Tappo-Auto-Claim/stargazers)
+[![Release](https://img.shields.io/github/v/release/Triet2804Dev/Wuwa-Tappo-Auto-Claim?color=blue)](https://github.com/Triet2804Dev/Wuwa-Tappo-Auto-Claim/releases)
+[![Stars](https://img.shields.io/github/stars/Triet2804Dev/Wuwa-Tappo-Auto-Claim)](https://github.com/Triet2804Dev/Wuwa-Tappo-Auto-Claim/stargazers)
 
 ## Preview
 

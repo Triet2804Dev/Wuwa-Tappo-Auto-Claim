@@ -18,6 +18,15 @@ Cloud version of Wuwa Tappo Auto Claim running 24/7 on Google Apps Script trigge
 
 ## How to Get Your Token
 
+### App Version (Desktop Tool)
+
+1. Make sure you have logged into the Wuwa Tappo App at least once.
+2. Run `GetToken.exe` (located in [`tool/GetToken.exe`](../tool/GetToken.exe) or download it from [Releases](https://github.com/Triet2804Dev/Wuwa-Tappo-Auto-Claim/releases)).
+3. The tool will automatically extract your token and copy it to your clipboard.
+4. Paste the token into `CONFIG.TOKEN` in `script.google.com`.
+
+### Web Version (Browser Console)
+
 1. Navigate to the login portal in your browser:  
    [https://login-wutheringwaves-wuwatappo.kurogames-global.com/login/?state=wuwatappoautoclaim](https://login-wutheringwaves-wuwatappo.kurogames-global.com/login/?state=wuwatappoautoclaim)
 2. Press `F12` or `Ctrl + Shift + I` to open Developer Tools.

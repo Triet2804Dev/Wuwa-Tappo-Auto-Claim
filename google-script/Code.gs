@@ -17,8 +17,8 @@ const CONFIG = {
   DISCORD_WEBHOOK: "",
 };
 
-const APP_VERSION = "1.0.0";
-const VERSION_CHECK_URL = "https://raw.githubusercontent.com/Triet2804Dev/Wuwa-Tappo-Auto-Claim/refs/heads/master/google-script/version.json";
+const APP_VERSION = "1.0.1";
+const VERSION_CHECK_URL = "https://raw.githubusercontent.com/Triet2804Dev/Wuwa-Tappo-Auto-Claim/refs/heads/main/google-script/version.json";
 const SERVICE_BASE = "https://api-wutheringwaves-wuwatappo.kurogames-global.com";
 const UPDATE_NOTIFY_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours cooldown
 

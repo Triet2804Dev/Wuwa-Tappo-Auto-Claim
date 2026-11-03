@@ -37,7 +37,7 @@ import requests
 # ----------------- CONSTANTS & PATHS -----------------
 PROJECT_NAME = "Wuwa Tappo Auto Claim"
 PROJECT_AUTHOR = "github.com/Triet2804Dev"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 GITHUB_RELEASES_URL = "https://api.github.com/repos/Triet2804Dev/Wuwa-Tappo-Auto-Claim/releases/latest"
 latest_version_info = None
 
@@ -1516,6 +1516,7 @@ def main():
         hide_window(notify_user=False)
 
     last_chest_open_total = {}
+    claim_failures = {"left": 0, "right": 0}
 
     while running_flag:
         try:
@@ -1537,6 +1538,29 @@ def main():
 
                 app_running = is_app_running()
 
+                # Always sync latest user state before claiming to prevent stale click counts
+                try:
+                    u = client.get_user_info()
+                    if client.token != token:
+                        token = client.token
+                        token_str = f"{token[:8]}...{token[-8:]} (Auto-Refreshed)"
+                    total_clicks = u.get("total_click_count", total_clicks)
+                    total_consume = u.get("total_click_consume", total_consume)
+                    left_ts = u.get("left_treasure_chest", left_ts)
+                    right_ts = u.get("right_treasure_chest", right_ts)
+                    # Re-verify cooldown in case of server-side timing drift
+                    now = current_server_ts()
+                    if chest_to_open == "left" and left_ts > now:
+                        update_view()
+                        time.sleep(1)
+                        continue
+                    if chest_to_open == "right" and right_ts > now:
+                        update_view()
+                        time.sleep(1)
+                        continue
+                except Exception as e:
+                    logger.debug(f"Pre-claim user info sync failed: {e}")
+
                 target_click = total_clicks + CLICK_GAIN_PER_CHEST
                 min_needed = (total_consume + CHEST_COST) + MIN_BALANCE_MAINTAIN
                 if target_click < min_needed:
@@ -1553,6 +1577,7 @@ def main():
                     token_str = f"{token[:8]}...{token[-8:]} (Auto-Refreshed)"
 
                 if res.get("code") == 0:
+                    claim_failures[chest_to_open] = 0
                     chest_count += 1
                     data = res.get("data", {})
                     asset = data.get("asset_name", "Unknown")
@@ -1614,18 +1639,27 @@ def main():
                     sys.stdout.write(f"\r  {Color.RED}[!] Failed to claim {place_name}: {err_msg}{' ' * 10}\r")
                     sys.stdout.flush()
                     logger.warning(f"Failed to claim {place_name}: {err_msg}")
+                    claim_failures[chest_to_open] = claim_failures.get(chest_to_open, 0) + 1
                     try:
                         u = client.get_user_info()
                         if client.token != token:
                             token = client.token
                             token_str = f"{token[:8]}...{token[-8:]} (Auto-Refreshed)"
+                        total_clicks = u.get("total_click_count", total_clicks)
+                        total_consume = u.get("total_click_consume", total_consume)
                         left_ts = u.get("left_treasure_chest", left_ts)
                         right_ts = u.get("right_treasure_chest", right_ts)
                     except Exception:
+                        pass
+
+                    if claim_failures[chest_to_open] >= 3:
+                        logger.warning(f"Repeated failures for {place_name}. Adding 30s cooldown buffer...")
                         if chest_to_open == "left":
                             left_ts = now + 30000
                         else:
                             right_ts = now + 30000
+                        claim_failures[chest_to_open] = 0
+
                     update_view()
                     time.sleep(2)
                     continue

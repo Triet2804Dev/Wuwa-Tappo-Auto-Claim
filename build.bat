@@ -16,6 +16,8 @@ pyinstaller --clean --noconfirm --onefile --console ^
     --icon="Hsin-Icon.ico" ^
     --add-data="Hsin-Icon.png;." ^
     --add-data="Hsin-Icon.ico;." ^
+    --collect-data certifi ^
+    --version-file="version_info.txt" ^
     --name="WuwaTappoAutoClaim" ^
     auto_claim.py
 

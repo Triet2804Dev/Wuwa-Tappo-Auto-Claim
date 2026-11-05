@@ -21,6 +21,26 @@
         tokenBox: "color: #fff; font-size: 15px; font-weight: bold; background: #1a1a2e; border: 1px solid #00ff88; padding: 6px 10px; border-radius: 6px; font-family: monospace;"
     };
 
+    // Known Kuro Games server ID mappings
+    const SERVER_NAMES = {
+        "10cd7254d57e58ae560b15d51e34b4c8": "SEA",
+        "89c74577884d94354c1537b0d9e2dbcc": "SEA",
+        "25979f42845c474d2847ffb0934c9c1b": "Asia",
+        "76402e5a20be28a870a2a7700a4d80a3": "America",
+        "54d58852eefcfd7ab93beaa1c3364dfa": "Europe",
+        "28b7e2cc4a66a7b70bc9318b76df42cb": "HMT"
+    };
+
+    function resolveServerName(item) {
+        if (item.serverName && typeof item.serverName === "string" && item.serverName.trim()) {
+            return item.serverName.trim();
+        }
+        if (item.serverId && SERVER_NAMES[item.serverId]) {
+            return SERVER_NAMES[item.serverId];
+        }
+        return item.serverId ? `Server ${item.serverId}` : "Unknown Server";
+    }
+
     console.log(
         `%c` +
         `========================================================================\n` +
@@ -40,29 +60,41 @@
             const normalized = urlStr.replace(/^wuwa-buddy:\/\/[^?]*\?/i, "https://dummy.local/?");
             const parsed = new URL(normalized);
             const params = parsed.searchParams;
-            const accessToken = params.get("access_token");
-            const cuid = params.get("cuid");
-            const userId = params.get("userId") || (cuid ? `U${cuid}A` : null);
-            const userName = params.get("userName") || userId;
+            const accessToken = params.get("access_token") || params.get("accessToken") || params.get("token");
+            let cuid = params.get("cuid") || params.get("puid");
+            const userId = params.get("userId") || params.get("userid") || (cuid ? `U${cuid}A` : null);
+            if (!cuid && userId) {
+                const m = String(userId).match(/\d+/);
+                if (m) cuid = m[0];
+            }
+            const userName = params.get("userName") || params.get("username") || userId || cuid;
 
-            if (accessToken && cuid) {
-                return { accessToken, cuid, userId, userName };
+            if (accessToken && (cuid || userId)) {
+                return { accessToken, cuid: cuid || userId, userId: userId || cuid, userName };
             }
         } catch (e) {
             // Fallback manual regex parser
-            const matchAt = urlStr.match(/access_token=([^&]+)/i);
+            const matchAt = urlStr.match(/(?:access_token|accessToken|token)=([^&]+)/i);
             const matchCuid = urlStr.match(/cuid=([^&]+)/i);
-            const matchUid = urlStr.match(/userId=([^&]+)/i);
-            const matchUname = urlStr.match(/userName=([^&]+)/i);
+            const matchUid = urlStr.match(/(?:userId|userid)=([^&]+)/i);
+            const matchUname = urlStr.match(/(?:userName|username)=([^&]+)/i);
 
-            if (matchAt && matchCuid) {
-                const cuid = decodeURIComponent(matchCuid[1]);
-                return {
-                    accessToken: decodeURIComponent(matchAt[1]),
-                    cuid: cuid,
-                    userId: matchUid ? decodeURIComponent(matchUid[1]) : `U${cuid}A`,
-                    userName: matchUname ? decodeURIComponent(matchUname[1]) : `U${cuid}A`
-                };
+            if (matchAt) {
+                let cuid = matchCuid ? decodeURIComponent(matchCuid[1]) : null;
+                const userId = matchUid ? decodeURIComponent(matchUid[1]) : (cuid ? `U${cuid}A` : null);
+                if (!cuid && userId) {
+                    const m = userId.match(/\d+/);
+                    if (m) cuid = m[0];
+                }
+                const userName = matchUname ? decodeURIComponent(matchUname[1]) : (userId || cuid);
+                if (cuid || userId) {
+                    return {
+                        accessToken: decodeURIComponent(matchAt[1]),
+                        cuid: cuid || userId,
+                        userId: userId || cuid,
+                        userName: userName
+                    };
+                }
             }
         }
         return null;
@@ -96,20 +128,102 @@
         try {
             console.log(`%c[1/2] Fetching character info for CUID: ${cuid}...`, STYLES.step);
 
-            // 1. Query player character data from Kuro API
-            const resPlayer = await fetch(API + "/api/auth/player/query", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ cuid: String(cuid), is_domestic: 0 })
-            });
-            const playerData = await resPlayer.json();
-            if (playerData.code !== 0 || !playerData.data?.items?.length) {
-                throw new Error("No character found for this account! (" + JSON.stringify(playerData) + ")");
+            let char = null;
+            let channelId = 18;
+            let chosenServerName = "Unknown";
+
+            // 1. Try querying player character data from Kuro API
+            try {
+                const resPlayer = await fetch(API + "/api/auth/player/query", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        cuid: String(cuid),
+                        is_domestic: 0,
+                        accessToken: String(accessToken),
+                        token: String(accessToken)
+                    })
+                });
+                const playerData = await resPlayer.json();
+                if (playerData && playerData.code === 0 && playerData.data?.items?.length) {
+                    const items = playerData.data.items;
+                    channelId = playerData.data.channelId || 18;
+                    char = items[0];
+
+                    if (items.length > 1) {
+                        console.log(`%c[i] Found ${items.length} characters across servers for this account:`, STYLES.info);
+                        items.forEach((it, idx) => {
+                            const sName = resolveServerName(it);
+                            console.log(`%c  [${idx + 1}] [${sName}] ${it.playerName} (ID: ${it.playerId})`, STYLES.step);
+                        });
+
+                        let menuText = `WUWA TAPPO - SELECT SERVER / CHARACTER\n\n` +
+                            `Found ${items.length} characters on your Kuro account.\n` +
+                            `Please enter the number corresponding to your character:\n\n`;
+                        items.forEach((it, idx) => {
+                            const sName = resolveServerName(it);
+                            menuText += `${idx + 1}. [${sName}] ${it.playerName} (ID: ${it.playerId})\n`;
+                        });
+                        menuText += `\nEnter number (1-${items.length}):`;
+
+                        const userInput = prompt(menuText, "1");
+                        const chosenIdx = parseInt(userInput, 10) - 1;
+                        if (!isNaN(chosenIdx) && chosenIdx >= 0 && chosenIdx < items.length) {
+                            char = items[chosenIdx];
+                        } else {
+                            console.warn("%c[!] Invalid or cancelled selection. Defaulting to character #1.", STYLES.blocked);
+                            char = items[0];
+                        }
+                    }
+                    chosenServerName = resolveServerName(char);
+                    console.log(`%c[+] Selected Character: [${chosenServerName}] ${char.playerName} (ID: ${char.playerId})`, STYLES.success);
+                } else {
+                    console.warn("%c[!] Automatic character query failed (code " + (playerData?.code ?? "unknown") + "). Falling back to server selection...", STYLES.step);
+                }
+            } catch (errQuery) {
+                console.warn("%c[!] Automatic character query network error:", STYLES.step, errQuery);
             }
 
-            const char = playerData.data.items[0];
-            const channelId = playerData.data.channelId || 18;
-            console.log(`%c[+] Found Character: ${char.playerName} (ID: ${char.playerId})`, STYLES.success);
+            // Fallback: If player/query failed or returned code 10024, let the user pick their server & UID
+            if (!char) {
+                const serverOptions = [
+                    { name: "SEA (Southeast Asia)", id: "10cd7254d57e58ae560b15d51e34b4c8" },
+                    { name: "Asia", id: "25979f42845c474d2847ffb0934c9c1b" },
+                    { name: "America", id: "76402e5a20be28a870a2a7700a4d80a3" },
+                    { name: "Europe", id: "54d58852eefcfd7ab93beaa1c3364dfa" },
+                    { name: "HMT (Taiwan, Hong Kong, Macao)", id: "28b7e2cc4a66a7b70bc9318b76df42cb" }
+                ];
+
+                let serverMenu = `WUWA TAPPO - SELECT SERVER\n\n` +
+                    `Automatic character lookup returned code 10024.\n` +
+                    `Please select your Wuthering Waves game server:\n\n`;
+                serverOptions.forEach((s, idx) => {
+                    serverMenu += `${idx + 1}. ${s.name}\n`;
+                });
+                serverMenu += `\nEnter number (1-${serverOptions.length}):`;
+
+                const sInput = prompt(serverMenu, "1");
+                const sIdx = parseInt(sInput, 10) - 1;
+                const chosenServer = (sIdx >= 0 && sIdx < serverOptions.length) ? serverOptions[sIdx] : serverOptions[0];
+
+                let uidInput = prompt(
+                    `WUWA TAPPO - ENTER PLAYER IN-GAME UID\n\n` +
+                    `Server: ${chosenServer.name}\n\n` +
+                    `Please enter your in-game 9-digit Player ID (UID):`,
+                    ""
+                );
+                if (!uidInput || !uidInput.trim()) {
+                    uidInput = String(cuid);
+                }
+
+                char = {
+                    playerId: uidInput.trim(),
+                    serverId: chosenServer.id,
+                    playerName: userName || `Rover_${uidInput.trim()}`
+                };
+                chosenServerName = chosenServer.name;
+                console.log(`%c[+] Selected Server: ${chosenServerName} | Player UID: ${char.playerId}`, STYLES.success);
+            }
 
             // 2. Exchange credentials for final 64-character token
             console.log("%c[2/2] Generating final 64-char Token...", STYLES.step);
@@ -142,6 +256,7 @@
                 `%c` +
                 `========================================================================\n` +
                 `                      LOGIN SUCCESSFUL! FINAL TOKEN                     \n` +
+                `  Server: [${chosenServerName}] | Player: ${char.playerName} (ID: ${char.playerId})\n` +
                 `========================================================================`,
                 STYLES.success
             );
@@ -157,6 +272,7 @@
             // Display browser prompt dialog pre-filled with the token for manual copy
             prompt(
                 `WUWA TAPPO AUTO CLAIM - LOGIN SUCCESSFUL!\n\n` +
+                `Server: [${chosenServerName}]\n` +
                 `Player: ${char.playerName} (ID: ${char.playerId})\n\n` +
                 `Please copy your 64-character token below (Ctrl+C):`,
                 finalToken
@@ -190,7 +306,7 @@
             if (typeof url === "string" && handleCallbackUrl(url)) return;
             return _origAssign.call(window.location, url);
         };
-    } catch (e) {}
+    } catch (e) { }
 
     try {
         const _origReplace = window.location.replace;
@@ -198,7 +314,7 @@
             if (typeof url === "string" && handleCallbackUrl(url)) return;
             return _origReplace.call(window.location, url);
         };
-    } catch (e) {}
+    } catch (e) { }
 
     // 3. Intercept Location.prototype.href if configurable
     try {
@@ -214,7 +330,7 @@
                 }
             });
         }
-    } catch (e) {}
+    } catch (e) { }
 
     // 4. Intercept <a> anchor clicks (DOM event capturing)
     window.addEventListener(
@@ -239,7 +355,7 @@
             }
             return _origClick.apply(this, arguments);
         };
-    } catch (e) {}
+    } catch (e) { }
 
     // 6. Intercept <iframe> src changes (used by some SDK redirectors)
     try {
@@ -255,7 +371,7 @@
                 }
             });
         }
-    } catch (e) {}
+    } catch (e) { }
 
     // 7. Intercept Chromium Navigation API if supported
     if (window.navigation && typeof window.navigation.addEventListener === "function") {
@@ -266,7 +382,7 @@
                     e.preventDefault();
                 }
             });
-        } catch (e) {}
+        } catch (e) { }
     }
 
     // 8. Listen for SDK postMessage events

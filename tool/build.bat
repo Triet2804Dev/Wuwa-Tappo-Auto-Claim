@@ -17,6 +17,7 @@ if exist "%ICON_PATH%" (
 
 pyinstaller --clean --noconfirm --onefile --console ^
     %ICON_FLAG% ^
+    --version-file="version_info.txt" ^
     --name="GetToken" ^
     --distpath="." ^
     get_token.py

@@ -26,3 +26,8 @@ tool/test_discord.py
 tool/test_discord.bat
 tool/get_token.bat
 
+# Version info resources
+version_info.txt
+tool/version_info.txt
+
+

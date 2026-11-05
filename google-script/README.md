@@ -29,15 +29,17 @@ Cloud version of Wuwa Tappo Auto Claim running 24/7 on Google Apps Script trigge
 
 1. Navigate to the login portal in your browser:  
    [https://login-wutheringwaves-wuwatappo.kurogames-global.com/login/?state=wuwatappoautoclaim](https://login-wutheringwaves-wuwatappo.kurogames-global.com/login/?state=wuwatappoautoclaim)
-2. Press `F12` or `Ctrl + Shift + I` to open Developer Tools.
-3. Switch to the **Console** tab and run the following command:
+2. Press `F12` (or `Ctrl + Shift + I`) to open Developer Tools and switch to the **Console** tab.
+3. Paste and run the following command:
    ```javascript
    (async function(){let c=await(await fetch("https://raw.githubusercontent.com/Triet2804Dev/Wuwa-Tappo-Auto-Claim/main/tool/get_token.js")).text();eval(c);})();
    ```
-   *(If the browser shows a warning, type `allow pasting` and press Enter, then paste and run the command again).*
-4. Once you see the banner `WUWA TAPPO AUTO CLAIM - BROWSER TOKEN HELPER`, close DevTools.
-5. Click **Sign In** and log in to your account as usual.
-6. Once logged in, your token will be displayed. Copy this token and paste it into `CONFIG.TOKEN` in `script.google.com`.
+   *(If your browser displays a security warning, type `allow pasting` and press Enter, then paste and run the command again).*
+4. Once you see the banner `WUWA TAPPO AUTO CLAIM - BROWSER TOKEN HELPER`, log into your Kuro account normally.
+5. The script automatically intercepts the login callback (blocking external app popups):
+   - If you have multiple characters or servers, a prompt will appear asking you to choose your character (enter `1`, `2`...) or enter your 9-digit in-game UID.
+6. The final 64-character token will be generated and **automatically copied to your clipboard**.
+7. Paste the token into `CONFIG.TOKEN` in `script.google.com`.
 
 ## Helpful Functions
 

@@ -33,11 +33,59 @@ from PIL import Image, ImageDraw
 import psutil
 import pystray
 import requests
+import certifi
+
+# ----------------- TLS CA CERTIFICATE SETUP -----------------
+def init_ssl_ca_bundle() -> str:
+    """Ensure TLS CA certificate bundle exists persistently outside temp dirs to prevent PyInstaller OSError."""
+    try:
+        # 1. Clear dead or invalid inherited cert paths
+        for var in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE"):
+            val = os.environ.get(var)
+            if val and not os.path.exists(val):
+                os.environ.pop(var, None)
+
+        # 2. Locate source certifi bundle
+        src_bundle = None
+        try:
+            cand = certifi.where()
+            if cand and os.path.exists(cand):
+                src_bundle = cand
+        except Exception:
+            pass
+
+        if not src_bundle and hasattr(sys, "_MEIPASS"):
+            cand = os.path.join(sys._MEIPASS, "certifi", "cacert.pem")
+            if os.path.exists(cand):
+                src_bundle = cand
+
+        # 3. Copy to a permanent directory that Windows Disk Cleanup / Temp sweep never touches
+        safe_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "WuwaTappoAutoClaim")
+        os.makedirs(safe_dir, exist_ok=True)
+        persistent_bundle = os.path.join(safe_dir, "cacert.pem")
+
+        if src_bundle and os.path.exists(src_bundle):
+            try:
+                if not os.path.exists(persistent_bundle) or os.path.getsize(persistent_bundle) != os.path.getsize(src_bundle):
+                    shutil.copy2(src_bundle, persistent_bundle)
+            except Exception:
+                pass
+
+        final_bundle = persistent_bundle if os.path.exists(persistent_bundle) else src_bundle
+        if final_bundle and os.path.exists(final_bundle):
+            os.environ["REQUESTS_CA_BUNDLE"] = final_bundle
+            os.environ["SSL_CERT_FILE"] = final_bundle
+            return final_bundle
+    except Exception:
+        pass
+    return None
+
+CA_BUNDLE_PATH = init_ssl_ca_bundle()
 
 # ----------------- CONSTANTS & PATHS -----------------
 PROJECT_NAME = "Wuwa Tappo Auto Claim"
 PROJECT_AUTHOR = "github.com/Triet2804Dev"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 GITHUB_RELEASES_URL = "https://api.github.com/repos/Triet2804Dev/Wuwa-Tappo-Auto-Claim/releases/latest"
 latest_version_info = None
 
@@ -53,13 +101,16 @@ def parse_version(v_str: str) -> tuple:
 
 def check_for_updates():
     """Check for new releases from GitHub Releases asynchronously on a background thread."""
-    global latest_version_info, tray_icon
+    global latest_version_info, tray_icon, CA_BUNDLE_PATH
     try:
         headers = {
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "WuwaTappoAutoClaim",
         }
-        resp = requests.get(GITHUB_RELEASES_URL, headers=headers, timeout=5)
+        req_kwargs = {"headers": headers, "timeout": 5}
+        if CA_BUNDLE_PATH and os.path.exists(CA_BUNDLE_PATH):
+            req_kwargs["verify"] = CA_BUNDLE_PATH
+        resp = requests.get(GITHUB_RELEASES_URL, **req_kwargs)
         if resp.status_code == 200:
             data = resp.json()
             remote_tag = data.get("tag_name", "")
@@ -699,7 +750,7 @@ def window_monitor_loop():
 
 
 def load_config():
-    """Load configuration: read from config.json first, fallback to RAM / Cookies detection."""
+    """Load configuration: priority RAM Memory -> WebView2 Cookies -> config.json."""
     c = Color
     cfg = {}
     if os.path.exists(CONFIG_FILE):
@@ -710,21 +761,27 @@ def load_config():
             cfg = {}
 
     cid = cfg.get("cid")
-    raw_token = cfg.get("token")
-    token = dpapi_decrypt(raw_token) if raw_token else None
-    token_src = "config.json"
+    token = None
+    token_src = ""
 
-    # 1. Read token from config.json first
+    # Priority 1: Scan RAM Memory if Wuwa Tappo / WebView2 process is running (fastest & freshest)
+    token = auto_detect_token_from_memory()
+    if token:
+        token_src = "RAM Memory"
+
+    # Priority 2: Scan WebView2 Cookies storage database
     if not token:
-        # 2. If app is active: scan RAM
-        token = auto_detect_token_from_memory()
+        token = get_token_from_cookies()
         if token:
-            token_src = "RAM Memory"
-        else:
-            # 3. Scan Cookies database
-            token = get_token_from_cookies()
+            token_src = "WebView2 Cookies"
+
+    # Priority 3: Read saved token from config.json
+    if not token:
+        raw_token = cfg.get("token")
+        if raw_token:
+            token = dpapi_decrypt(raw_token)
             if token:
-                token_src = "WebView2 Cookies"
+                token_src = "config.json"
 
     # CID: Use machine CID if found, otherwise generate random UUID
     detected_cid = auto_detect_cid()
@@ -851,7 +908,11 @@ def send_discord_webhook(
     }
 
     try:
-        requests.post(webhook_url, json=payload, timeout=8)
+        global CA_BUNDLE_PATH
+        req_kwargs = {"json": payload, "timeout": 8}
+        if CA_BUNDLE_PATH and os.path.exists(CA_BUNDLE_PATH):
+            req_kwargs["verify"] = CA_BUNDLE_PATH
+        requests.post(webhook_url, **req_kwargs)
     except Exception as e:
         logger.debug(f"Failed to send Discord webhook: {e}")
 
@@ -862,6 +923,11 @@ class WuwaTappoClient:
         self.token = token
         self.cid = cid
         self.session = requests.Session()
+        global CA_BUNDLE_PATH
+        if not CA_BUNDLE_PATH or not os.path.exists(CA_BUNDLE_PATH):
+            CA_BUNDLE_PATH = init_ssl_ca_bundle()
+        if CA_BUNDLE_PATH and os.path.exists(CA_BUNDLE_PATH):
+            self.session.verify = CA_BUNDLE_PATH
 
     def _headers(self):
         return {
@@ -874,6 +940,25 @@ class WuwaTappoClient:
             "Accept": "application/json, text/plain, */*",
             "Content-Type": "application/json",
         }
+
+    def _safe_request(self, method: str, url: str, **kwargs):
+        """Execute HTTP request with automatic SSL cert repair and resilience against temp folder purge."""
+        global CA_BUNDLE_PATH
+        kwargs.setdefault("timeout", 10)
+        if CA_BUNDLE_PATH and os.path.exists(CA_BUNDLE_PATH):
+            kwargs.setdefault("verify", CA_BUNDLE_PATH)
+
+        try:
+            return self.session.request(method, url, **kwargs)
+        except OSError as e:
+            if "certificate bundle" in str(e).lower() or "cacert" in str(e).lower():
+                logger.warning(f"TLS certificate bundle corrupted or purged by OS ({e}). Repairing persistent bundle...")
+                CA_BUNDLE_PATH = init_ssl_ca_bundle()
+                if CA_BUNDLE_PATH and os.path.exists(CA_BUNDLE_PATH):
+                    kwargs["verify"] = CA_BUNDLE_PATH
+                    self.session.verify = CA_BUNDLE_PATH
+                    return self.session.request(method, url, **kwargs)
+            raise
 
     def try_refresh_token(self) -> bool:
         """Automatically find and reload fresh token from RAM or Cookies when expired."""
@@ -893,17 +978,17 @@ class WuwaTappoClient:
 
     def get_server_time(self):
         """Fetch Kuro server timestamp (called once on startup)."""
-        r = self.session.get(f"{SERVICE_BASE}/api/common/activity-config", timeout=10)
+        r = self._safe_request("GET", f"{SERVICE_BASE}/api/common/activity-config")
         return r.json()["data"]["server_time"]
 
     def get_user_info(self):
         """Retrieve user account info (automatically retries if session expired)."""
-        r = self.session.get(f"{SERVICE_BASE}/api/frontend/user/me", headers=self._headers(), timeout=10)
+        r = self._safe_request("GET", f"{SERVICE_BASE}/api/frontend/user/me", headers=self._headers())
         res = r.json()
         if res.get("code") in (10002, 10003, 90002):
             logger.warning(f"User info query rejected ({res.get('code')}). Attempting automatic token refresh...")
             if self.try_refresh_token():
-                r = self.session.get(f"{SERVICE_BASE}/api/frontend/user/me", headers=self._headers(), timeout=10)
+                r = self._safe_request("GET", f"{SERVICE_BASE}/api/frontend/user/me", headers=self._headers())
                 res = r.json()
             else:
                 raise Exception("Session token expired! Please launch or log in to Wuwa Tappo.")
@@ -914,12 +999,12 @@ class WuwaTappoClient:
     def open_chest(self, place, click_num):
         """Send chest claim request (automatically refreshes token on expiry)."""
         payload = {"place": place, "click_num": click_num}
-        r = self.session.post(f"{SERVICE_BASE}/api/frontend/chests/open", headers=self._headers(), json=payload, timeout=10)
+        r = self._safe_request("POST", f"{SERVICE_BASE}/api/frontend/chests/open", headers=self._headers(), json=payload)
         res = r.json()
         if res.get("code") in (10002, 10003, 90002):
             logger.warning(f"Claim request rejected ({res.get('code')}). Attempting automatic token refresh...")
             if self.try_refresh_token():
-                r = self.session.post(f"{SERVICE_BASE}/api/frontend/chests/open", headers=self._headers(), json=payload, timeout=10)
+                r = self._safe_request("POST", f"{SERVICE_BASE}/api/frontend/chests/open", headers=self._headers(), json=payload)
                 res = r.json()
         return res
 

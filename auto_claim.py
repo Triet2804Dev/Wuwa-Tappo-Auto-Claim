@@ -337,10 +337,20 @@ def auto_detect_token_from_memory():
             name = (p.info["name"] or "").lower()
             if name == "wuwatappo.exe":
                 tappo_pids.append(p.info["pid"])
+            elif name == "msedgewebview2.exe":
+                try:
+                    cmd = " ".join(p.cmdline() or []).lower()
+                    if "wuwatappo" in cmd:
+                        tappo_pids.append(p.info["pid"])
+                except Exception:
+                    pass
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
-    pattern = re.compile(rb"kuro_infoToken=([a-f0-9]{64})")
+    patterns = [
+        re.compile(rb"kuro_infoToken=([a-f0-9]{64})"),
+        re.compile(rb"kuro_infoToken[\"':\s=]+([a-f0-9]{64})"),
+    ]
     for pid in tappo_pids:
         h = kernel32.OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, False, pid)
         if not h:
@@ -353,10 +363,11 @@ def auto_detect_token_from_memory():
                 nread = ctypes.c_size_t()
                 if kernel32.ReadProcessMemory(h, ctypes.c_void_p(addr), buf, mbi.RegionSize, ctypes.byref(nread)):
                     data = bytes(buf)[: nread.value]
-                    m = pattern.search(data)
-                    if m:
-                        kernel32.CloseHandle(h)
-                        return m.group(1).decode("utf-8")
+                    for pat in patterns:
+                        m = pat.search(data)
+                        if m:
+                            kernel32.CloseHandle(h)
+                            return m.group(1).decode("utf-8")
             addr += mbi.RegionSize
         kernel32.CloseHandle(h)
     return None

@@ -85,7 +85,7 @@ CA_BUNDLE_PATH = init_ssl_ca_bundle()
 # ----------------- CONSTANTS & PATHS -----------------
 PROJECT_NAME = "Wuwa Tappo Auto Claim"
 PROJECT_AUTHOR = "github.com/Triet2804Dev"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 GITHUB_RELEASES_URL = "https://api.github.com/repos/Triet2804Dev/Wuwa-Tappo-Auto-Claim/releases/latest"
 latest_version_info = None
 
@@ -205,7 +205,7 @@ class Color:
 
 
 def init_terminal():
-    """Enable ANSI Escape Code support on Windows Terminal / cmd.exe."""
+    """Enable ANSI Escape Code support and disable QuickEdit Mode on Windows Console."""
     global console_hwnd
     if os.name == "nt":
         try:
@@ -214,6 +214,13 @@ def init_terminal():
             if kernel32.GetConsoleMode(h_stdout, ctypes.byref(mode)):
                 # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
                 kernel32.SetConsoleMode(h_stdout, mode.value | 0x0004)
+            # Disable QuickEdit Mode so accidental mouse clicks never freeze the console
+            h_stdin = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+            in_mode = ctypes.c_ulong()
+            if kernel32.GetConsoleMode(h_stdin, ctypes.byref(in_mode)):
+                # Clear ENABLE_QUICK_EDIT_MODE (0x0040), set ENABLE_EXTENDED_FLAGS (0x0080)
+                new_in_mode = (in_mode.value & ~0x0040) | 0x0080
+                kernel32.SetConsoleMode(h_stdin, new_in_mode)
             kernel32.SetConsoleTitleW(f"{PROJECT_NAME} - {PROJECT_AUTHOR}")
             sys.stdout.write("\033[?25l")  # Hide blinking cursor for GUI-like clean output
             sys.stdout.flush()
@@ -240,23 +247,23 @@ def visible_len(s: str) -> int:
 BOX_WIDTH = 70
 
 
-def make_top(title: str) -> str:
-    dash_count = max(0, BOX_WIDTH - 6 - visible_len(title))
+def make_top(title: str, width: int = BOX_WIDTH) -> str:
+    dash_count = max(0, width - 6 - visible_len(title))
     return f"  ┌── {title} " + "─" * dash_count + "┐"
 
 
-def make_mid(title: str) -> str:
-    dash_count = max(0, BOX_WIDTH - 6 - visible_len(title))
+def make_mid(title: str, width: int = BOX_WIDTH) -> str:
+    dash_count = max(0, width - 6 - visible_len(title))
     return f"  ├── {title} " + "─" * dash_count + "┤"
 
 
-def make_bot() -> str:
-    return "  └" + "─" * (BOX_WIDTH - 2) + "┘"
+def make_bot(width: int = BOX_WIDTH) -> str:
+    return "  └" + "─" * (width - 2) + "┘"
 
 
-def box_line(content: str) -> str:
+def box_line(content: str, width: int = BOX_WIDTH) -> str:
     """Format a line inside the border box with exact padding."""
-    pad = max(0, BOX_WIDTH - 4 - visible_len(content))
+    pad = max(0, width - 4 - visible_len(content))
     return f"  │  {content}{' ' * pad}│"
 
 
@@ -934,7 +941,7 @@ class WuwaTappoClient:
             "Authorization": f"Bearer {self.token}",
             "X-BLM-CID": self.cid,
             "X-BLM-FRID": uuid.uuid4().hex,
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0",
             "Origin": "http://tauri.localhost",
             "Referer": "http://tauri.localhost/",
             "Accept": "application/json, text/plain, */*",
@@ -982,13 +989,15 @@ class WuwaTappoClient:
         return r.json()["data"]["server_time"]
 
     def get_user_info(self):
-        """Retrieve user account info (automatically retries if session expired)."""
-        r = self._safe_request("GET", f"{SERVICE_BASE}/api/frontend/user/me", headers=self._headers())
+        """Retrieve user account info with cache-buster timestamp (automatically retries if session expired)."""
+        ts = int(time.time() * 1000)
+        r = self._safe_request("GET", f"{SERVICE_BASE}/api/frontend/user/me?t={ts}", headers=self._headers())
         res = r.json()
         if res.get("code") in (10002, 10003, 90002):
             logger.warning(f"User info query rejected ({res.get('code')}). Attempting automatic token refresh...")
             if self.try_refresh_token():
-                r = self._safe_request("GET", f"{SERVICE_BASE}/api/frontend/user/me", headers=self._headers())
+                ts = int(time.time() * 1000)
+                r = self._safe_request("GET", f"{SERVICE_BASE}/api/frontend/user/me?t={ts}", headers=self._headers())
                 res = r.json()
             else:
                 raise Exception("Session token expired! Please launch or log in to Wuwa Tappo.")
@@ -1379,8 +1388,8 @@ if os.name == "nt":
         pass
 
 
-def build_banner_lines() -> list:
-    w = BOX_WIDTH
+def build_banner_lines(width: int = BOX_WIDTH) -> list:
+    w = width
     c = Color
     title_text = f"{PROJECT_NAME} v{APP_VERSION}".upper()
     author_text = PROJECT_AUTHOR
@@ -1404,6 +1413,7 @@ def build_dashboard_lines(
     token_str: str = "",
     cid_str: str = "",
     has_webhook: bool = False,
+    width: int = BOX_WIDTH,
 ) -> list:
     c = Color
     left_cd = max(0, int((left_ts - now_ts) / 1000))
@@ -1426,36 +1436,56 @@ def build_dashboard_lines(
         new_v = latest_version_info.get("version", "")
         version_status = f"{c.WHITE}v{APP_VERSION}{c.RESET} {c.BOLD}{c.GREEN}➜ New v{new_v} available!{c.RESET}"
 
+    content_lines = [
+        f"{c.YELLOW}Player{c.RESET}          : {c.BOLD}{c.WHITE}{nickname}{c.RESET}",
+        f"{c.YELLOW}Version{c.RESET}         : {version_status}",
+        f"{c.YELLOW}Balance{c.RESET}         : {c.BOLD}{c.GREEN}{balance:,} clicks{c.RESET} {c.GRAY}(Total: {total_clicks:,} | Spent: {total_consume:,}){c.RESET}",
+        f"{c.YELLOW}Token{c.RESET}           : {c.WHITE}{token_str}{c.RESET}",
+        f"{c.YELLOW}Device{c.RESET}          : {c.WHITE}{cid_str}{c.RESET}",
+        f"{c.YELLOW}Discord Webhook{c.RESET} : {discord_status}",
+        f"{c.YELLOW}App Sync{c.RESET}        : {sync_status}",
+        f"{c.YELLOW}Tray Mode{c.RESET}       : {c.CYAN}Click [-] Minimize to hide to Tray{c.RESET}",
+        f"{c.CYAN}[Left Chest]{c.RESET}    : {left_status}",
+        f"{c.CYAN}[Right Chest]{c.RESET}   : {right_status}",
+    ]
+    w = max(width, max((visible_len(x) for x in content_lines), default=0) + 6)
+
     return [
-        f"{c.CYAN}{make_top('Status Dashboard')}{c.RESET}",
-        box_line(f"{c.YELLOW}Player{c.RESET}          : {c.BOLD}{c.WHITE}{nickname}{c.RESET}"),
-        box_line(f"{c.YELLOW}Version{c.RESET}         : {version_status}"),
-        box_line(f"{c.YELLOW}Balance{c.RESET}         : {c.BOLD}{c.GREEN}{balance:,} clicks{c.RESET} {c.GRAY}(Total: {total_clicks:,} | Spent: {total_consume:,}){c.RESET}"),
-        f"{c.CYAN}{make_mid('Connection & System')}{c.RESET}",
-        box_line(f"{c.YELLOW}Token{c.RESET}           : {c.WHITE}{token_str}{c.RESET}"),
-        box_line(f"{c.YELLOW}Device{c.RESET}          : {c.WHITE}{cid_str}{c.RESET}"),
-        box_line(f"{c.YELLOW}Discord Webhook{c.RESET} : {discord_status}"),
-        box_line(f"{c.YELLOW}App Sync{c.RESET}        : {sync_status}"),
-        box_line(f"{c.YELLOW}Tray Mode{c.RESET}       : {c.CYAN}Click [-] Minimize to hide to Tray{c.RESET}"),
-        f"{c.CYAN}{make_mid('Cooldown Schedule')}{c.RESET}",
-        box_line(f"{c.CYAN}[Left Chest]{c.RESET}    : {left_status}"),
-        box_line(f"{c.CYAN}[Right Chest]{c.RESET}   : {right_status}"),
-        f"{c.CYAN}{make_bot()}{c.RESET}\n",
+        f"{c.CYAN}{make_top('Status Dashboard', w)}{c.RESET}",
+        box_line(content_lines[0], w),
+        box_line(content_lines[1], w),
+        box_line(content_lines[2], w),
+        f"{c.CYAN}{make_mid('Connection & System', w)}{c.RESET}",
+        box_line(content_lines[3], w),
+        box_line(content_lines[4], w),
+        box_line(content_lines[5], w),
+        box_line(content_lines[6], w),
+        box_line(content_lines[7], w),
+        f"{c.CYAN}{make_mid('Cooldown Schedule', w)}{c.RESET}",
+        box_line(content_lines[8], w),
+        box_line(content_lines[9], w),
+        f"{c.CYAN}{make_bot(w)}{c.RESET}\n",
     ]
 
 
-def build_claim_card_lines(chest_count: int, place: str, asset: str, rarity: str, balance: int, next_cd: int) -> list:
+def build_claim_card_lines(chest_count: int, place: str, asset: str, rarity: str, balance: int, next_cd: int, width: int = BOX_WIDTH) -> list:
     c = Color
     place_name = "Left Chest" if place == "left" else "Right Chest"
     rarity_style = c.RARITY.get(rarity.lower(), c.WHITE)
 
     title = f"★ REWARD CLAIMED (#{chest_count})"
+    content_lines = [
+        f"{c.YELLOW}Chest{c.RESET}   : {c.BOLD}{place_name}{c.RESET}",
+        f"{c.YELLOW}Item{c.RESET}    : {c.BOLD}{c.WHITE}{asset}{c.RESET} {rarity_style}({rarity.capitalize()}){c.RESET}",
+        f"{c.YELLOW}Balance{c.RESET} : {c.BOLD}{c.GREEN}{balance:,} clicks{c.RESET} {c.GRAY}| Next: {format_duration(next_cd)}{c.RESET}",
+    ]
+    w = max(width, max((visible_len(x) for x in content_lines), default=0) + 6)
     return [
-        f"{c.GREEN}{make_top(title)}{c.RESET}",
-        box_line(f"{c.YELLOW}Chest{c.RESET}   : {c.BOLD}{place_name}{c.RESET}"),
-        box_line(f"{c.YELLOW}Item{c.RESET}    : {c.BOLD}{c.WHITE}{asset}{c.RESET} {rarity_style}({rarity.capitalize()}){c.RESET}"),
-        box_line(f"{c.YELLOW}Balance{c.RESET} : {c.BOLD}{c.GREEN}{balance:,} clicks{c.RESET} {c.GRAY}| Next: {format_duration(next_cd)}{c.RESET}"),
-        f"{c.GREEN}{make_bot()}{c.RESET}\n",
+        f"{c.GREEN}{make_top(title, w)}{c.RESET}",
+        box_line(content_lines[0], w),
+        box_line(content_lines[1], w),
+        box_line(content_lines[2], w),
+        f"{c.GREEN}{make_bot(w)}{c.RESET}\n",
     ]
 
 
@@ -1489,9 +1519,7 @@ def redraw_screen(
     if not is_window_visible:
         return
 
-    lines = []
-    lines.extend(build_banner_lines())
-    lines.extend(build_dashboard_lines(
+    dash_lines = build_dashboard_lines(
         nickname=nickname,
         balance=balance,
         total_clicks=total_clicks,
@@ -1503,16 +1531,42 @@ def redraw_screen(
         token_str=token_str,
         cid_str=cid_str,
         has_webhook=has_webhook,
-    ))
+    )
+    box_w = max(BOX_WIDTH, visible_len(dash_lines[0]) - 2)
+    claim_lines = []
     if last_reward:
-        lines.extend(build_claim_card_lines(
+        claim_lines = build_claim_card_lines(
             chest_count=last_reward["count"],
             place=last_reward["place"],
             asset=last_reward["asset"],
             rarity=last_reward["rarity"],
             balance=last_reward["balance"],
             next_cd=last_reward["next_cd"],
-        ))
+            width=box_w,
+        )
+        claim_w = visible_len(claim_lines[0]) - 2
+        if claim_w > box_w:
+            box_w = claim_w
+            dash_lines = build_dashboard_lines(
+                nickname=nickname,
+                balance=balance,
+                total_clicks=total_clicks,
+                total_consume=total_consume,
+                left_ts=left_ts,
+                right_ts=right_ts,
+                now_ts=now_ts,
+                app_running=app_running,
+                token_str=token_str,
+                cid_str=cid_str,
+                has_webhook=has_webhook,
+                width=box_w,
+            )
+
+    lines = []
+    lines.extend(build_banner_lines(width=box_w))
+    lines.extend(dash_lines)
+    if claim_lines:
+        lines.extend(claim_lines)
     if progress_line:
         lines.append(progress_line)
 
@@ -1640,8 +1694,13 @@ def main():
                     if client.token != token:
                         token = client.token
                         token_str = f"{token[:8]}...{token[-8:]} (Auto-Refreshed)"
-                    total_clicks = u.get("total_click_count", total_clicks)
-                    total_consume = u.get("total_click_consume", total_consume)
+                    # Keep counts monotonic: never let a stale read downgrade in-memory clicks or consume
+                    server_clicks = u.get("total_click_count", 0)
+                    if server_clicks > total_clicks:
+                        total_clicks = server_clicks
+                    server_consume = u.get("total_click_consume", 0)
+                    if server_consume > total_consume:
+                        total_consume = server_consume
                     left_ts = u.get("left_treasure_chest", left_ts)
                     right_ts = u.get("right_treasure_chest", right_ts)
                     # Re-verify cooldown in case of server-side timing drift
@@ -1741,8 +1800,12 @@ def main():
                         if client.token != token:
                             token = client.token
                             token_str = f"{token[:8]}...{token[-8:]} (Auto-Refreshed)"
-                        total_clicks = u.get("total_click_count", total_clicks)
-                        total_consume = u.get("total_click_consume", total_consume)
+                        server_clicks = u.get("total_click_count", 0)
+                        if server_clicks > total_clicks:
+                            total_clicks = server_clicks
+                        server_consume = u.get("total_click_consume", 0)
+                        if server_consume > total_consume:
+                            total_consume = server_consume
                         left_ts = u.get("left_treasure_chest", left_ts)
                         right_ts = u.get("right_treasure_chest", right_ts)
                     except Exception:
@@ -1761,14 +1824,19 @@ def main():
                     continue
 
             # 4. When both chests are in cooldown
-            next_wait = min(left_cd, right_cd)
-            next_name = "Left Chest" if left_cd <= right_cd else "Right Chest"
-            chest_key = "left" if left_cd <= right_cd else "right"
-            total_duration = last_chest_open_total.get(chest_key, 1800)
-
-            # Update countdown progress bar every second (0 network requests)
             sync_timer = 0
-            while next_wait > 0 and running_flag:
+            while running_flag:
+                now = current_server_ts()
+                left_cd = max(0, int((left_ts - now) / 1000))
+                right_cd = max(0, int((right_ts - now) / 1000))
+                next_wait = min(left_cd, right_cd)
+                if next_wait <= 0:
+                    break
+
+                next_name = "Left Chest" if left_cd <= right_cd else "Right Chest"
+                chest_key = "left" if left_cd <= right_cd else "right"
+                total_duration = last_chest_open_total.get(chest_key, 1800)
+
                 # Check local Wuwa Tappo running state every 5 seconds (0 network requests)
                 if sync_timer % 5 == 0:
                     was_running = app_running
@@ -1790,7 +1858,6 @@ def main():
                 update_view(progress_line=line, in_place=True)
 
                 time.sleep(1)
-                next_wait -= 1
                 sync_timer += 1
 
             sys.stdout.write("\r" + " " * 75 + "\r")

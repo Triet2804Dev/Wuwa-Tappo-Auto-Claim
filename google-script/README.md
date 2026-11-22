@@ -48,6 +48,7 @@ You can select and run these functions from the Apps Script toolbar:
 - **`testToken`**: Verifies your token, displays player nickname, click balance, and chest claim times.
 - **`setup`**: Starts cloud automation and sets up all time-driven triggers.
 - **`stopAutomation`**: Deletes all cloud triggers and halts execution.
+- **`reloadCore`**: Clears the local 6-hour cache to immediately fetch the latest core engine from GitHub.
 
 ## Notes
 
